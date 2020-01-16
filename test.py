@@ -1,6 +1,7 @@
-import numpy
 import sys
 import os
+import argparse
+import numpy
 
 def load_vecs(path):
     with open(path) as ip:
@@ -26,7 +27,7 @@ def precompute_sims(vecs, vec_words_ix, test_words):
              for t in test_words])
     return vecs @ test_vecs.T
 
-def perform_test(sims, vec_words, vec_words_ix, test_words_ix, a, a_, b):
+def perform_test_add(sims, vec_words, vec_words_ix, test_words_ix, a, a_, b):
     ix_a = test_words_ix[a]
     ix_a_ = test_words_ix[a_]
     ix_b = test_words_ix[b]
@@ -42,14 +43,60 @@ def perform_test(sims, vec_words, vec_words_ix, test_words_ix, a, a_, b):
 
     return vec_words[scores.argmax()]
 
-if __name__ == '__main__':
-    vec_path = sys.argv[1] if len(sys.argv) > 1 else 'sample-vectors.txt'
-    test_paths = sys.argv[2:] if len(sys.argv) > 2 else ['sample-test.txt']
+def perform_test_mul(sims, vec_words, vec_words_ix, test_words_ix, a, a_, b):
+    ix_a = test_words_ix[a]
+    ix_a_ = test_words_ix[a_]
+    ix_b = test_words_ix[b]
 
-    vec_words, vec_words_ix, vecs = load_vecs(vec_path)
+    scores_num = sims[:, ix_a_] * sims[:, ix_b]
+    scores_den = sims[:, ix_a] + (sims[:, ix_a] == 0) * 1e-10
+    scores = scores_num / scores_den
+
+    if a in vec_words_ix:
+        scores[vec_words_ix[a]] = 0
+    if a_ in vec_words_ix:
+        scores[vec_words_ix[a_]] = 0
+    if b in vec_words_ix:
+        scores[vec_words_ix[b]] = 0
+
+    return vec_words[scores.argmax()]
+
+def get_args():
+    parser = argparse.ArgumentParser(
+        description='A simple 3CosAdd / 3CosMul analogy solver.'
+    )
+
+    parser.add_argument(
+        '-m', 
+        '--method', 
+        default='add',
+        choices=['add', 'mul'],
+        type=str,
+        help='The cosine offset solution method (additive vs. multiplicative).'
+    )
+    parser.add_argument(
+        'vectors',
+        help='The path to a text-based vector file',
+        type=str,
+        default='sample-vectors.txt'
+    )
+    parser.add_argument(
+        'tests',
+        help='The path to one or more test files',
+        nargs=argparse.REMAINDER,
+        default=['sample-test.txt']
+    )
+
+    return parser.parse_args()
+
+if __name__ == '__main__':
+    args = get_args()
+    perform_test = perform_test_add if args.method == 'add' else perform_test_mul
+
+    vec_words, vec_words_ix, vecs = load_vecs(args.vectors)
 
     all_results = []
-    for path in test_paths:
+    for path in args.tests:
         test_words, test_words_ix, test_pairs = load_test(path)
 
         if any('/' in w for w in test_words):
@@ -57,9 +104,16 @@ if __name__ == '__main__':
             continue
 
         sims = precompute_sims(vecs, vec_words_ix, test_words)
+        # Enforce non-negativity on similarities.
+        if args.method == 'mul':
+            sims = (sims + 1) / 2 
+
         results = []
         for a, a_ in test_pairs:
             for b, b_ in test_pairs:
+                if a == b and a_ == b_:
+                    continue
+
                 b_ = set(b_)
                 pair_results = []
                 for w_a_ in a_:
