@@ -1,6 +1,9 @@
 import sys
 import os
 import argparse
+
+from pathlib import Path
+
 import numpy
 
 def load_vecs(path):
@@ -27,39 +30,46 @@ def precompute_sims(vecs, vec_words_ix, test_words):
              for t in test_words])
     return vecs @ test_vecs.T
 
-def perform_test_add(sims, vec_words, vec_words_ix, test_words_ix, a, a_, b):
-    ix_a = test_words_ix[a]
-    ix_a_ = test_words_ix[a_]
-    ix_b = test_words_ix[b]
+class TestVecs:
+    def __init__(self, vecs, vec_words, vec_words_ix, 
+                 test_words, test_words_ix, mul=False):
+        sims = precompute_sims(vecs, vec_words_ix, test_words)
+        if mul:
+            # Enforce non-negativity on similarities.
+            sims += 1
+            sims /= 2
+            self._score = self._mul
+        else:
+            self._score = self._add
 
-    scores = sims[:, ix_a_] - sims[:, ix_a] + sims[:, ix_b]
+        self.sims = sims
+        self.vec_words = vec_words
+        self.vec_words_ix = vec_words_ix
+        self.test_words_ix = test_words_ix
 
-    if a in vec_words_ix:
-        scores[vec_words_ix[a]] = 0
-    if a_ in vec_words_ix:
-        scores[vec_words_ix[a_]] = 0
-    if b in vec_words_ix:
-        scores[vec_words_ix[b]] = 0
+    def _add(self, a, a_, b):
+        return a_ - a + b
 
-    return vec_words[scores.argmax()]
+    def _mul(self, a, a_, b):
+        num = a_ * b
+        den = a + (a == 0) * 1e-10
+        return num / den
 
-def perform_test_mul(sims, vec_words, vec_words_ix, test_words_ix, a, a_, b):
-    ix_a = test_words_ix[a]
-    ix_a_ = test_words_ix[a_]
-    ix_b = test_words_ix[b]
+    def run(self, a, a_, b):
+        ix_a = self.test_words_ix[a]
+        ix_a_ = self.test_words_ix[a_]
+        ix_b = self.test_words_ix[b]
 
-    scores_num = sims[:, ix_a_] * sims[:, ix_b]
-    scores_den = sims[:, ix_a] + (sims[:, ix_a] == 0) * 1e-10
-    scores = scores_num / scores_den
-
-    if a in vec_words_ix:
-        scores[vec_words_ix[a]] = 0
-    if a_ in vec_words_ix:
-        scores[vec_words_ix[a_]] = 0
-    if b in vec_words_ix:
-        scores[vec_words_ix[b]] = 0
-
-    return vec_words[scores.argmax()]
+        scores = self._score(
+            self.sims[:, ix_a],
+            self.sims[:, ix_a_],
+            self.sims[:, ix_b]
+        )
+        
+        exclude_inputs = [self.vec_words_ix[w] for w in (a, a_, b)
+                          if w in self.vec_words_ix]
+        scores[exclude_inputs] = 0
+        return self.vec_words[scores.argmax()]
 
 def get_args():
     parser = argparse.ArgumentParser(
@@ -78,55 +88,86 @@ def get_args():
         'vectors',
         help='The path to a text-based vector file',
         type=str,
-        default='sample-vectors.txt'
     )
     parser.add_argument(
         'tests',
         help='The path to one or more test files',
         nargs=argparse.REMAINDER,
-        default=['sample-test.txt']
     )
 
     return parser.parse_args()
 
+def test_groups(path_list):
+    path_list = [Path(p) for p in path_list]
+
+    # If the only thing passed was a directory, and
+    # it contains no test files (here assumed to be)
+    # files ending with .txt, treat it as a list of 
+    # its subdirectories.
+    if len(path_list) == 1 and path_list[0].is_dir():
+        contents = list(path_list[0].iterdir())
+        if not any(p.suffix == '.txt' for p in contents):
+            path_list = contents
+
+    groups = []
+    for p in path_list:
+        if p.is_dir():
+            groups.append((p, sorted(p.glob('*.txt'))))
+        elif p.is_file() and p.suffix == '.txt':
+            groups.append((p, [p]))
+    return groups
+
 if __name__ == '__main__':
     args = get_args()
-    perform_test = perform_test_add if args.method == 'add' else perform_test_mul
 
     vec_words, vec_words_ix, vecs = load_vecs(args.vectors)
 
     all_results = []
-    for path in args.tests:
-        test_words, test_words_ix, test_pairs = load_test(path)
+    for group, paths in test_groups(args.tests):
+        group_results = []
+        print()
+        print('Test group {}'.format(group.stem))
+        print()
+        for path in paths:
+            test_words, test_words_ix, test_pairs = load_test(path)
+            test = TestVecs(vecs, vec_words, vec_words_ix, 
+                            test_words, test_words_ix, mul=(args.method == 'mul'))
 
-        if any('/' in w for w in test_words):
-            print('Tests with multiple answers are not supported yet. Skipping {}'.format(path))
-            continue
+            # These inner loops should be in a separate function.
+            results = []
+            for a, a_ in test_pairs:
+                for b, b_ in test_pairs:
+                    if a == b and a_ == b_:
+                        continue
 
-        sims = precompute_sims(vecs, vec_words_ix, test_words)
-        # Enforce non-negativity on similarities.
-        if args.method == 'mul':
-            sims = (sims + 1) / 2 
+                    b_ = set(b_)
+                    pair_results = []
 
-        results = []
-        for a, a_ in test_pairs:
-            for b, b_ in test_pairs:
-                if a == b and a_ == b_:
-                    continue
+                    # This is still extremely slow for Lexicographic tests
+                    # because there are so many acceptable answers. It would
+                    # probably help to vectorize this step, but I don't see how
+                    # to do so and still avoid cheating by ruling out *all* 
+                    # a_ values, even those that aren't being tested.
+                    for w_a_ in a_:
+                        guess = test.run(a, w_a_, b)
+                        pair_results.append(guess in b_)
+                    results.append(any(pair_results))
 
-                b_ = set(b_)
-                pair_results = []
-                for w_a_ in a_:
-                    guess = perform_test(sims, vec_words, vec_words_ix, test_words_ix, a, w_a_, b)
-                    pair_results.append(guess in b_)
-                results.append(any(pair_results))
-
-        all_results.extend(results)
-        filename = os.path.split(path)[-1]
-        print('{}: {:.4g} out of {} correct ({:.4g})'.format(
-            filename, sum(results), len(results), sum(results) / len(results)
-        ))
-
-    print('Collected results: {:.4g} out of {} correct ({:.4g})'.format(
-        sum(all_results), len(all_results), sum(all_results) / len(all_results)
+            group_results.extend(results)
+            all_results.extend(results)
+            print('{}: {:.4g} out of {} correct ({:.4g})'.format(
+                Path(path).stem, sum(results), len(results), 
+                sum(results) / len(results)
+            ))
+        # Only display stats for groups wtih two or more tests.
+        if len(paths) > 1:
+            print()
+            print('Group {} results: {:.4g} out of {} correct ({:.4g})'.format(
+                group.stem, sum(group_results), len(group_results), 
+                sum(group_results) / len(group_results)
+            ))
+        print()
+    print('All results: {:.4g} out of {} correct ({:.4g})'.format(
+        sum(all_results), len(all_results), 
+        sum(all_results) / len(all_results)
     ))
