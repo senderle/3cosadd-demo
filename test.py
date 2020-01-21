@@ -98,7 +98,7 @@ def get_args():
     return parser.parse_args()
 
 def test_groups(path_list):
-    path_list = [Path(p) for p in path_list]
+    path_list = [Path(p) for p in sorted(path_list)]
 
     # If the only thing passed was a directory, and
     # it contains no test files (here assumed to be)
@@ -107,7 +107,7 @@ def test_groups(path_list):
     if len(path_list) == 1 and path_list[0].is_dir():
         contents = list(path_list[0].iterdir())
         if not any(p.suffix == '.txt' for p in contents):
-            path_list = contents
+            path_list = sorted(contents)
 
     groups = []
     for p in path_list:
@@ -155,19 +155,19 @@ if __name__ == '__main__':
 
             group_results.extend(results)
             all_results.extend(results)
-            print('{}: {:.4g} out of {} correct ({:.4g})'.format(
+            print('{}: {} out of {} correct ({:.3g})'.format(
                 Path(path).stem, sum(results), len(results), 
                 sum(results) / len(results)
             ))
         # Only display stats for groups wtih two or more tests.
         if len(paths) > 1:
             print()
-            print('Group {} results: {:.4g} out of {} correct ({:.4g})'.format(
+            print('Group {} results: {} out of {} correct ({:.4g})'.format(
                 group.stem, sum(group_results), len(group_results), 
                 sum(group_results) / len(group_results)
             ))
         print()
-    print('All results: {:.4g} out of {} correct ({:.4g})'.format(
+    print('All results: {} out of {} correct ({:.4g})'.format(
         sum(all_results), len(all_results), 
         sum(all_results) / len(all_results)
     ))
