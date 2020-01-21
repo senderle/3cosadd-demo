@@ -5,7 +5,7 @@ A quick demonstration of a fast 3CosAdd implementation
 
 With `numpy` installed, run
 
-    python test.py
+    python test.py sample-vectors.txt sample-test.txt
 
 or, to use your own vector and test file, 
 
