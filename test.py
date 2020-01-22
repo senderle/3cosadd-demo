@@ -71,6 +71,17 @@ class TestVecs:
         scores[exclude_inputs] = 0
         return self.vec_words[scores.argmax()]
 
+    def test_set(self, test_pairs):
+        results = []
+        for a, a_ in test_pairs:
+            for b, b_ in test_pairs:
+                if a == b and a_ == b_:
+                    continue
+                b_ = set(b_)
+                guess = self.run(a, a_[0], b)
+                results.append(guess in b_)
+        return results
+
 def get_args():
     parser = argparse.ArgumentParser(
         description='A simple 3CosAdd / 3CosMul analogy solver.'
@@ -133,34 +144,7 @@ if __name__ == '__main__':
             test = TestVecs(vecs, vec_words, vec_words_ix, 
                             test_words, test_words_ix, mul=(args.method == 'mul'))
 
-            # These inner loops should be in a separate function.
-            results = []
-            for a, a_ in test_pairs:
-                for b, b_ in test_pairs:
-                    if a == b and a_ == b_:
-                        continue
-
-                    b_ = set(b_)
-                    guess = test.run(a, a_[0], b)
-                    results.append(guess in b_)
-
-                    # This tries to test every possible a_ value against 
-                    # every possible b_ value. But that's overly permissive. 
-                    # It turns out the real test just tests the first value of
-                    # a_ against all the values of b_
-
-                    # pair_results = []
-
-                    # # This is still extremely slow for Lexicographic tests
-                    # # because there are so many acceptable answers. It would
-                    # # probably help to vectorize this step, but I don't see how
-                    # # to do so and still avoid cheating by ruling out *all* 
-                    # # a_ values, even those that aren't being tested.
-                    # for w_a_ in a_:
-                    #     guess = test.run(a, w_a_, b)
-                    #     pair_results.append(guess in b_)
-                    # guess = test.run(a, a_, b
-                    # results.append(any(pair_results))
+            results = test.test_set(test_pairs)
 
             group_results.extend(results)
             all_results.extend(results)
@@ -168,6 +152,7 @@ if __name__ == '__main__':
                 Path(path).stem, sum(results), len(results), 
                 sum(results) / len(results)
             ))
+
         # Only display stats for groups wtih two or more tests.
         if len(paths) > 1:
             print()
